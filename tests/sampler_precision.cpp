@@ -52,35 +52,46 @@ static int main_inner()
 	auto cmd = dev.request_command_buffer();
 	cmd->set_program("assets://shaders/sampler_precision.comp");
 
+	const unsigned TEX_SIZE = 223;
+
 	BufferCreateInfo buf;
-	buf.size = 4096 * 2 * sizeof(uint32_t);
+	buf.size = TEX_SIZE * 4 * sizeof(float);
 	buf.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-	buf.domain = BufferDomain::CachedHost;
+	buf.domain = BufferDomain::CachedCoherentHostPreferCoherent;
 	auto ssbo = dev.create_buffer(buf);
 
-	auto imageinfo = ImageCreateInfo::immutable_2d_image(4, 1, VK_FORMAT_R8_UNORM);
-	const uint8_t pixels[] = { 0, 1, 2, 3 };
-	ImageInitialData data = { pixels };
-	auto img = dev.create_image(imageinfo, &data);
+	auto imageinfo1 = ImageCreateInfo::immutable_2d_image(TEX_SIZE, 1, VK_FORMAT_R32_SFLOAT);
+	float pixels1[TEX_SIZE];
+	for (unsigned i = 0; i < TEX_SIZE; i++) {
+		pixels1[i] = float(i);
+	}
+	ImageInitialData data1 = { pixels1 };
+	auto img1 = dev.create_image(imageinfo1, &data1);
 
-	cmd->set_texture(0, 0, img->get_view(), StockSampler::NearestClamp);
-	cmd->set_storage_buffer(0, 1, *ssbo);
-	cmd->dispatch(4096 / 64, 1, 1);
+	auto imageinfo2 = ImageCreateInfo::immutable_2d_image(1, 1, VK_FORMAT_R32_SFLOAT);
+	float pixels2[1] = {223.0f};
+	ImageInitialData data2 = { pixels2 };
+	auto img2 = dev.create_image(imageinfo2, &data2);
+
+	cmd->set_texture(0, 0, img1->get_view(), StockSampler::NearestClamp);
+	cmd->set_texture(0, 1, img2->get_view(), StockSampler::NearestClamp);
+	cmd->set_storage_buffer(0, 2, *ssbo);
+	cmd->dispatch(TEX_SIZE, 1, 1);
 	cmd->barrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_HOST_READ_BIT);
 	dev.submit(cmd);
 	dev.wait_idle();
 
-	auto *ptr = static_cast<const uint32_t *>(dev.map_host_buffer(*ssbo, MEMORY_ACCESS_READ_BIT));
-	for (unsigned i = 2048 - 32; i < 2048 + 32; i++)
+	auto *ptr = static_cast<const float *>(dev.map_host_buffer(*ssbo, MEMORY_ACCESS_READ_BIT));
+	for (unsigned i = 0; i < TEX_SIZE; i++)
 	{
-		LOGI("U = %u + %u / 2048\n", i / 2048, i % 2048);
-		LOGI("  Point: %u\n", ptr[2 * i + 0]);
-	}
-
-	for (unsigned i = 1 * 2048 + 1024 - 32; i < 1 * 2048 + 1024 + 32; i++)
-	{
-		LOGI("U = %u + %u / 2048\n", i / 2048, i % 2048);
-		LOGI("  Gather: %u\n", ptr[2 * i + 1]);
+		LOGI("arr[%u]: %f, x coord %.20f = 0x%.8x (texel coord %.20f = 0x%.8x)\n",
+		     i,
+		     ptr[i * 4 + 0],
+		     ptr[i * 4 + 1], ((uint32_t *)ptr)[i * 4 + 1],
+		     ptr[i * 4 + 2], ((uint32_t *)ptr)[i * 4 + 2]);
+		if (i && (ptr[i * 4 + 0] - ptr[i * 4 - 4] < 0.5f)) {
+			LOGI("!!!!");
+		}
 	}
 
 	return 0;
